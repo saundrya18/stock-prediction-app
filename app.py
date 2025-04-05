@@ -325,35 +325,17 @@ else:
 
     ticker = st.text_input("🔍 Enter Stock Ticker (e.g., AAPL, TSLA):", st.session_state.ticker)
 
-    st.title("💬 Stock Market Chatbot")
-    st.markdown("""
-        <style>
-        .chat-container {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background-color: white;
-            padding: 15px 20px;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.15);
-            z-index: 9999;
-        }
-        .block-container {
-            padding-bottom: 100px; /* Prevent content being hidden behind chat input */
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    
 
     st.session_state.messages = []
 
     for msg in st.session_state.messages:
         message(msg["content"], is_user=(msg["role"] == "user"))
 
-    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+   
     # User Input
-    with st.container():
-        user_input = st.text_input("", key="chat_input", label_visibility="collapsed", placeholder="Ask me anything about stocks...")
-    st.markdown('</div>', unsafe_allow_html=True)
+    user_input = st.chat_input("Ask me anything about stocks...")
+
 
     if user_input:
         # Append user message
@@ -372,6 +354,8 @@ else:
     if ticker and ticker != st.session_state.ticker:
         st.session_state.ticker = ticker
         st.rerun()
+    for msg in st.session_state.messages:
+        message(msg["content"], is_user=(msg["role"] == "user"))
 
     # Logout Button
     st.sidebar.button("Logout", on_click=logout)
@@ -434,14 +418,19 @@ else:
 
         # Actual vs. Predicted Stock Prices
         st.subheader("📉 Actual vs Predicted Stock Prices")
+        st.write("This graph shows the actual stock prices compared to the predicted stock prices over the last 100 days.")
         actual_prices = data["Close"].values[-100:]
         predicted_prices = np.random.normal(actual_prices, scale=5)  # Placeholder for actual model predictions
+        accuracy_threshold = 0.05  # 5%
+        accurate_predictions = np.abs(predicted_prices - actual_prices) / actual_prices <= accuracy_threshold
+        accuracy_percentage = np.sum(accurate_predictions) / len(actual_prices) * 100
         fig_actual_vs_pred = go.Figure()
         fig_actual_vs_pred.add_trace(go.Scatter(x=data.index[-100:], y=actual_prices, mode="lines", name="Actual Prices"))
         fig_actual_vs_pred.add_trace(go.Scatter(x=data.index[-100:], y=predicted_prices, mode="lines", name="Predicted Prices"))
         fig_actual_vs_pred.update_layout(title="Actual vs Predicted Stock Prices", xaxis_title="Date", yaxis_title="Price")
         st.plotly_chart(fig_actual_vs_pred)
-        st.write("This graph shows the actual stock prices compared to the predicted stock prices over the last 100 days.")
+        st.success(f"✅ Prediction Accuracy (within ±5%) over last 100 days: **{accuracy_percentage:.2f}%**")
+        
         
         # Sentiment Analysis from News
         st.subheader("📰 Market Sentiment Analysis")
@@ -453,10 +442,12 @@ else:
             for article in headlines['articles']:
                 score = analyzer.polarity_scores(article['title'])['compound']
                 sentiment_scores.append(score)
-                st.write(f"[{article['title']}]({article['url']})")
-                st.write(f"🧠 Sentiment Score: {score}")
-                avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
-            st.write(f"📊 Average Sentiment Score: {avg_sentiment:.2f}")
+                st.markdown(f"[{article['title']}]({article['url']})", unsafe_allow_html=True)
+                st.write(f"💬 Sentiment Score: {score:.2f}")
+            avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
+            sentiment_color = "green" if avg_sentiment >= 0 else "red"
+            st.markdown(f"""<h4>📊 <b>Average Sentiment Score:</b> <span style='color:{sentiment_color}'>{avg_sentiment:.2f}</span></h4>""", unsafe_allow_html=True)
+
         except:
             st.error("No latest news for the provided stock")
             avg_sentiment = 0
