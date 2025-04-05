@@ -1,0 +1,19 @@
+credentials:
+  usernames:
+    user1:
+      email: user1@example.com
+      name: User One
+      password: "$2b$12$NYq8.YKyHG8Ims9TI/DV/.Y0naM2riymfCy0uC1AP2K9y77VrZ9Ka"  # Hashed password
+    user2:
+      email: user2@example.com
+      name: User Two
+      password: "$2b$12$NYq8.YKyHG8Ims9TI/DV/.Y0naM2riymfCy0uC1AP2K9y77VrZ9Ka"
+
+cookie:
+  expiry_days: 30
+  key: "some_random_key"
+  name: "stock_prediction_auth"
+
+preauthorized:
+  emails:
+    - preauthorized@example.com

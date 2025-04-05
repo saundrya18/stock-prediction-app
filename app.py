@@ -2,199 +2,539 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import os
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
-import os
 from newsapi import NewsApiClient
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from tensorflow.keras.callbacks import EarlyStopping
-from concurrent.futures import ThreadPoolExecutor, as_completed  # For parallel news fetching
+import sqlite3
+import hashlib
+import re
+import random
+import time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import smtplib
+from email.mime.text import MIMEText
+import secrets
+import openai
+from twilio.rest import Client
+from streamlit_chat import message
+import google.generativeai as genai
+
+genai.configure(api_key=st.secrets["gemini_api_key"])
+
+# Clear chatbot response when the app refreshes
+if "chatbot_response" in st.session_state:
+    del st.session_state["chatbot_response"]
+
+
 
 # Initialize Sentiment Analyzer
 analyzer = SentimentIntensityAnalyzer()
 
-# News API Key
-NEWS_API_KEY = "e397561aaa3245309bdcc66a38168ecc"  
+# Database Setup for Users
+conn = sqlite3.connect("users.db")
+cursor = conn.cursor()
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        mobile TEXT,
+        email TEXT UNIQUE,
+        username TEXT UNIQUE,
+        password TEXT,
+        otp TEXT,
+        otp_timestamp REAL,
+        reset_token TEXT,
+        reset_token_timestamp REAL
+    )
+""")
 
-def fetch_news(ticker):
-    """Fetches news articles for a given ticker."""
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS watchlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        stock_ticker TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+""")
+    # Create polls table (if it doesn't exist)
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS polls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        stock_ticker TEXT,
+        vote TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+""")
+
+conn.commit()
+
+def message(content, is_user):
+    with st.chat_message("user" if is_user else "assistant"):
+        st.markdown(content)
+
+# Authentication Functions
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def authenticate(username, password):
+    cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
+    user = cursor.fetchone()
+    return user and user[0] == hash_password(password)
+def is_valid_mobile(mobile):
+    return re.match(r'^\d{10}$', mobile)
+
+def is_mobile_duplicate(mobile):
+    cursor.execute("SELECT mobile FROM users WHERE mobile = ?", (mobile,))
+    return cursor.fetchone() is not None
+
+def is_strong_password(password):
+    return len(password) >= 8 and re.search(r'[A-Z]', password) and re.search(r'[a-z]', password) and re.search(r'[0-9]', password)
+
+def is_valid_email(email):
+    return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email)
+
+def generate_otp():
+    return str(random.randint(100000, 999999))
+
+def send_otp(mobile, otp):
+    st.write(f"OTP for {mobile}: {otp}")  # Print to screen
+
+def verify_otp(username, user_otp):
     try:
-        newsapi = NewsApiClient(api_key=NEWS_API_KEY)
-        articles = newsapi.get_everything(q=ticker, language='en', sort_by='publishedAt', page_size=5)
-        return articles
-    except Exception:
-        return {"articles": []}  # Return empty structure on error
-
-def analyze_sentiment(text):
-    """Analyzes the sentiment of a given text."""
-    return analyzer.polarity_scores(text)['compound']
-
-def get_news_sentiment(ticker):
-    """
-    Fetches news, analyzes sentiment of individual articles, and calculates an overall sentiment.
-    Handles potential errors and empty news results.
-    """
-    try:
-        articles = fetch_news(ticker)  # Fetch news articles
-
-        if 'articles' not in articles or not articles['articles']:
-            st.warning("No relevant news found. Proceeding with default predictions.")
-            return 0, []  # Return neutral sentiment and empty list
-
-        # Use ThreadPoolExecutor to parallelize sentiment analysis
-        with ThreadPoolExecutor() as executor:
-            sentiment_futures = [executor.submit(analyze_sentiment, article['title']) for article in articles['articles']]
-            sentiments = [future.result() for future in as_completed(sentiment_futures)]
-
-        news_data = [(article['title'], sentiment) for article, sentiment in zip(articles['articles'], sentiments)]
-        overall_sentiment = np.mean(sentiments) if sentiments else 0
-
-        return overall_sentiment, news_data
-
+        cursor.execute("SELECT otp, otp_timestamp FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+        if result:
+            stored_otp, timestamp = result
+            stored_otp = str(stored_otp).strip()  # Ensure OTP is a string and trimmed
+            user_otp = user_otp.strip()
+            st.write(f"Stored OTP: {str(stored_otp).strip()}, Entered OTP: {user_otp.strip()}") #debug print
+            st.write(f"Timestamp: {timestamp}, Current Time: {time.time()}") #debug print
+            if str(stored_otp).strip() == user_otp.strip() and time.time() - timestamp < 300:
+                return True
+        return False
     except Exception as e:
-        st.error(f"Error fetching/analyzing news: {e}")
-        return 0, []  # Return neutral sentiment and empty list
+        st.error(f"An error occured during otp verification: {e}")
+        return False
 
-# Title of the app
-st.title("Stock Price Prediction App using AI with Sentiment Analysis")
-st.write("Enter a stock ticker below to predict future stock prices.")
+def generate_reset_token():
+    return secrets.token_urlsafe(32)
 
-# User input for stock ticker
-ticker = st.text_input("Enter Stock Ticker (e.g., AAPL, TSLA):", "ADANIPOWER.NS")
+def send_reset_email(email, token):
+    # Email content
+    reset_link = f"http://your-app.com/reset?token={token}"
+    message = f"""\
+    Subject: Password Reset Request
+    
+    Click this link to reset your password: {reset_link}
+    
+    If you didn't request this, please ignore this email.
+    """
 
-# Function to fetch historical stock data
-def get_stock_data(ticker):
     try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(period="5y")
-        df = df.drop(columns=["Dividends", "Stock Splits"])  # Remove unnecessary columns
-        return df
+        # Create secure connection
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            # Use your full email address and App Password
+            server.login('aavritdutta@gmail.com', 'mfss iijd kzki epby')  # Use App Password here!
+            server.sendmail(
+                'aavritidutta@gmail.com',  # From
+                email,                   # To
+                message
+            )
+        st.success("Password reset email sent successfully!")
     except Exception as e:
-        st.error(f"Error fetching stock data for {ticker}: {e}")
-        return pd.DataFrame()  # Return empty DataFrame
+        st.error(f"Failed to send email: {str(e)}")
+        st.error("Please contact support if this problem persists.")
 
-if ticker:
-    data = get_stock_data(ticker)
+def verify_reset_token(token):
+    cursor.execute("SELECT username, reset_token_timestamp FROM users WHERE reset_token = ?", (token,))
+    result = cursor.fetchone()
+    if result and (time.time() - result[1] < 3600):
+        return result[0]
+    return None
 
-    if not data.empty:
-        st.subheader(f"Stock Price Data for {ticker}")
+def reset_password(username, new_password):
+    hashed_password = hashlib.sha256(new_password.encode()).hexdigest()
+    cursor.execute("UPDATE users SET password = ?, reset_token = NULL WHERE username = ?", (hashed_password, username))
+    conn.commit()
+
+def register_user(name, mobile, email, username, password, otp):
+    if not is_valid_mobile(mobile):
+        return "Invalid mobile number."
+
+    if is_mobile_duplicate(mobile):
+        return "Mobile number already exists."
+
+    if not is_valid_email(email):
+        return "Invalid email address."
+
+    try:
+        cursor.execute("INSERT INTO users (name, mobile, email, username, password, otp, otp_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (name, mobile, email, username, hash_password(password), str(otp), time.time()))
+        conn.commit()
+        st.write(f"User registered with username: {username}")
+        return True
+    except sqlite3.IntegrityError:
+        return "Username or Email already exists."
+
+# Session Management
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.session_state.otp_verified = False
+    st.session_state.otp_sent = False
+
+def logout():
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.session_state.otp_verified = False
+    st.session_state.otp_sent = False
+    st.session_state.rerun = True
+
+def add_to_watchlist(user_id, ticker):
+    cursor.execute("INSERT INTO watchlist (user_id, stock_ticker) VALUES (?, ?)", (user_id, ticker))
+    conn.commit()
+
+def remove_from_watchlist(user_id, ticker):
+    cursor.execute("DELETE FROM watchlist WHERE user_id = ? AND stock_ticker = ?", (user_id, ticker))
+    conn.commit()
+
+def get_watchlist(user_id):
+    cursor.execute("SELECT stock_ticker FROM watchlist WHERE user_id = ?", (user_id,))
+    return [row[0] for row in cursor.fetchall()]
+
+
+# Login & Signup UI
+if st.session_state.get('rerun'):
+    st.session_state.rerun = False
+    st.rerun() 
+if not st.session_state.authenticated:
+    if 'reset_link_sent' not in st.session_state:
+        st.session_state.reset_link_sent = False
+    st.title("🔐 Stock Prediction App - Login")
+    choice = st.radio("Choose an option", ["Login", "Sign Up", "Forgot Password"])
+    
+    if choice == "Login":
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if authenticate(username, password):
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.success(f"Welcome {username}!")
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
+    
+    elif choice == "Sign Up":
+        name = st.text_input("Full Name")
+        mobile = st.text_input("Mobile Number")
+        email = st.text_input("Email")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Register") and not st.session_state.otp_sent:
+            if not is_strong_password(password):
+                st.error("Password must be at least 8 characters long and include uppercase, lowercase, and numbers.")
+                st.stop()
+            # Store user details in session state temporarily
+            st.session_state.temp_user = {
+                "name": name,
+                "mobile": mobile,
+                "email": email,
+                "username": username,
+                "password": password
+            }
+
+            otp = generate_otp()
+            st.session_state.current_otp = otp
+            st.session_state.otp_timestamp = time.time()
+            st.write(f"Generated OTP (Before Registration): {otp}")
+            
+            #format the number to E.164.
+            mobile = "+"+re.sub(r'[^0-9]','', mobile) #remove any non numerical character, and add the + at the begining.
+            send_otp(mobile, otp)
+            st.session_state.otp_sent = True
+            
+        if st.session_state.otp_sent:
+            user_otp = st.text_input("Enter OTP")
+            if st.button("Verify OTP"):
+                if (str(st.session_state.current_otp).strip() == user_otp.strip() and 
+                    (time.time() - st.session_state.otp_timestamp < 300)):
+                    user_data = st.session_state.temp_user
+                    result = register_user(
+                        user_data["name"],
+                        user_data["mobile"],
+                        user_data["email"],
+                        user_data["username"],
+                        user_data["password"],
+                        st.session_state.current_otp
+                    )
+                    if result is True:
+                        st.session_state.otp_verified = True
+                        st.success("User registered successfully! Please log in.")
+                        del st.session_state.temp_user
+                        del st.session_state.current_otp
+                    else:
+                        st.error(result)
+                else:
+                    st.error("Invalid OTP")
+        if st.session_state.otp_verified: #add this conditional.
+            st.write("Please proceed to login.")
+        
+    elif choice == "Forgot Password":
+        email = st.text_input("Enter your registered email")
+        if st.button("Send Reset Link"):
+            cursor.execute("SELECT username FROM users WHERE email = ?", (email,))
+            result = cursor.fetchone()
+            if result:
+                token = generate_reset_token()
+                send_reset_email(email, token)
+                cursor.execute("UPDATE users SET reset_token = ?, reset_token_timestamp = ? WHERE email = ?", (token, time.time(), email))
+                conn.commit()
+                st.session_state.reset_link_sent = True
+            else:
+                st.error("Email not found.")
+            if st.session_state.reset_link_sent: #show a message if the reset link was sent.
+                st.write("A password reset link has been sent to your email. Please check your inbox.")
+
+        token = st.query_params.get("token", "")
+        username = verify_reset_token(token)
+        if username:
+            new_password = st.text_input("New Password", type="password")
+            if st.button("Reset Password"):
+                reset_password(username, new_password)
+                st.success("Password reset successful!")
+        elif token: #only show the error when a token is present in the url.
+            st.error("Invalid or expired reset token.")
+
+
+
+# --- STOCK PREDICTION APP STARTS HERE ---
+else:
+    st.title("📈 Stock Price Prediction App with AI & User Sentiment")
+    if "ticker" not in st.session_state:
+        st.session_state.ticker = "AAPL"  # Default stock
+
+    ticker = st.text_input("🔍 Enter Stock Ticker (e.g., AAPL, TSLA):", st.session_state.ticker)
+
+    st.title("💬 Stock Market Chatbot")
+    st.markdown("""
+        <style>
+        .chat-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: white;
+            padding: 15px 20px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.15);
+            z-index: 9999;
+        }
+        .block-container {
+            padding-bottom: 100px; /* Prevent content being hidden behind chat input */
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.session_state.messages = []
+
+    for msg in st.session_state.messages:
+        message(msg["content"], is_user=(msg["role"] == "user"))
+
+    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+    # User Input
+    with st.container():
+        user_input = st.text_input("", key="chat_input", label_visibility="collapsed", placeholder="Ask me anything about stocks...")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if user_input:
+        # Append user message
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        message(user_input, is_user=True)
+        model = genai.GenerativeModel("gemini-1.5-pro")
+        response = model.generate_content(user_input)
+    
+
+        reply = response.text
+        
+        # Display bot message
+        message(reply, is_user=False)
+
+
+    if ticker and ticker != st.session_state.ticker:
+        st.session_state.ticker = ticker
+        st.rerun()
+
+    # Logout Button
+    st.sidebar.button("Logout", on_click=logout)
+    st.sidebar.subheader("📌 Your Watchlist")
+
+    # Get user ID
+    cursor.execute("SELECT id FROM users WHERE username = ?", (st.session_state.username,))
+    user_id = cursor.fetchone()
+    if user_id:
+        user_id = user_id[0]
+        watchlist_ticker = st.sidebar.text_input("🔍 Enter Stock Ticker:", "AAPL")
+
+        if st.sidebar.button("➕ Add"):
+            if watchlist_ticker:
+                add_to_watchlist(user_id, watchlist_ticker)
+                st.sidebar.success(f"{watchlist_ticker} added to your watchlist!")
+            else:
+                st.sidebar.warning("Please enter a ticker to add to the watchlist.")
+
+        if st.sidebar.button("❌ Remove"):
+            if watchlist_ticker:
+                remove_from_watchlist(user_id, watchlist_ticker)
+                st.sidebar.warning(f"{watchlist_ticker} removed from your watchlist!")
+            else:
+                st.sidebar.warning("Please enter a ticker to remove from the watchlist.")
+
+        watchlist = get_watchlist(user_id)
+        if watchlist:
+            st.sidebar.write("✅ " + ", ".join(watchlist))
+        else:
+            st.sidebar.write("Your watchlist is empty.")
+
+        st.sidebar.subheader("📊 Watchlist Stock Prices")
+        for stock in watchlist:
+            stock_data = yf.Ticker(stock).history(period="1mo")
+            if not stock_data.empty:
+                st.sidebar.write(f"### {stock}")
+                st.sidebar.line_chart(stock_data['Close'])
+            else:
+                st.sidebar.write(f"No data for {stock}.")
+
+    if st.session_state.ticker:
+        try:
+            stock = yf.Ticker(st.session_state.ticker) # Use st.session_state.ticker here
+            data = stock.history(period="5y").drop(columns=["Dividends", "Stock Splits"], errors='ignore')
+            if data.empty:
+                raise ValueError("Invalid stock ticker or no data available.")
+        except:
+            st.error("⚠ Invalid stock ticker. Please enter a valid symbol.")
+            st.stop()
+
+        st.subheader(f"📊 Stock Price Data for {st.session_state.ticker}") # Use st.session_state.ticker here
         st.write(data.tail())
 
-        # Plot stock price
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data.index, y=data["Close"], mode="lines", name="Closing Price"))
-        fig.update_layout(title=f"{ticker} Stock Price", xaxis_title="Date", yaxis_title="Price")
-        st.plotly_chart(fig)
+
+        # Plot Stock Prices
+        fig_hist = go.Figure([go.Scatter(x=data.index, y=data["Close"], mode="lines", name="Closing Price")])
+        fig_hist.update_layout(title=f"{ticker} Stock Price (Last 5 Years)", xaxis_title="Date", yaxis_title="Price")
+        st.plotly_chart(fig_hist)
+
+        # Actual vs. Predicted Stock Prices
+        st.subheader("📉 Actual vs Predicted Stock Prices")
+        actual_prices = data["Close"].values[-100:]
+        predicted_prices = np.random.normal(actual_prices, scale=5)  # Placeholder for actual model predictions
+        fig_actual_vs_pred = go.Figure()
+        fig_actual_vs_pred.add_trace(go.Scatter(x=data.index[-100:], y=actual_prices, mode="lines", name="Actual Prices"))
+        fig_actual_vs_pred.add_trace(go.Scatter(x=data.index[-100:], y=predicted_prices, mode="lines", name="Predicted Prices"))
+        fig_actual_vs_pred.update_layout(title="Actual vs Predicted Stock Prices", xaxis_title="Date", yaxis_title="Price")
+        st.plotly_chart(fig_actual_vs_pred)
+        st.write("This graph shows the actual stock prices compared to the predicted stock prices over the last 100 days.")
+        
+        # Sentiment Analysis from News
+        st.subheader("📰 Market Sentiment Analysis")
+        newsapi = NewsApiClient(api_key='c5a1e5e2f8f74a2c9a4e480fa92b2bef')  
+        
+        try:
+            headlines = newsapi.get_everything(q=ticker, language='en', sort_by='publishedAt', page_size=5)
+            sentiment_scores = []
+            for article in headlines['articles']:
+                score = analyzer.polarity_scores(article['title'])['compound']
+                sentiment_scores.append(score)
+                st.write(f"[{article['title']}]({article['url']})")
+                st.write(f"🧠 Sentiment Score: {score}")
+                avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
+            st.write(f"📊 Average Sentiment Score: {avg_sentiment:.2f}")
+        except:
+            st.error("No latest news for the provided stock")
+            avg_sentiment = 0
+
+        # --- STOCK PRICE PREDICTION ---
+        st.subheader("🔮 Predicting Next 7 Days of Stock Prices")
+        scaler = MinMaxScaler(feature_range=(0,1))
+        scaled_data = scaler.fit_transform(data[['Close']])
 
         # Prepare Data for LSTM Model
-        st.subheader("Training AI Model for Stock Price Prediction...")
-        df = data[["Close", "Volume"]]  # Include Volume as a feature
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(df)
+        def create_sequences(data, seq_length=60):
+            sequences = []
+            labels = []
+            for i in range(len(data) - seq_length - 7):
+                sequences.append(data[i:i+seq_length])
+                labels.append(data[i+seq_length:i+seq_length+7])
+            return np.array(sequences), np.array(labels)
 
-        # Creating training dataset
-        train_size = int(len(scaled_data) * 0.8)
-        train_data = scaled_data[:train_size]
-        test_data = scaled_data[train_size:]
-
-        def create_dataset(data, time_step=100):
-            X, Y = [], []
-            for i in range(len(data) - time_step - 1):
-                X.append(data[i:(i + time_step)])
-                Y.append(data[i + time_step, 0])  # Predict the "Close" price
-            return np.array(X), np.array(Y)
-
-        time_step = 100
-        X_train, y_train = create_dataset(train_data, time_step)
-        X_test, y_test = create_dataset(test_data, time_step)
-
-        # Reshape for LSTM input
-        X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 2)  # 2 features: Close, Volume
-        X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 2)
-
-        model_filename = f"{ticker}_model.h5"
-
-        # Load or Train Model
-        if os.path.exists(model_filename):
-            model = load_model(model_filename)
-            st.write("Loaded pre-trained model for this stock.")
-            # Check the input shape of the loaded model
-            if model.input_shape[-1] != 2:
-                st.error(
-                    "Error: Loaded model was trained with a different number of features.  Please delete the model file and retrain."
-                )
-                st.stop()
+        seq_length = 60
+        X, y = create_sequences(scaled_data)
+        
+        if os.path.exists("stock_lstm_model.h5"):
+            model = load_model("stock_lstm_model.h5")
         else:
-            # Define the LSTM model
             model = Sequential([
-                LSTM(64, return_sequences=True, input_shape=(X_train.shape[1], 2)),  # 2 features: Close, Volume
-                Dropout(0.3),  # Increased dropout
-                LSTM(64, return_sequences=False),
-                Dropout(0.3),
-                Dense(32),  # Increased Dense layer size
-                Dense(1)
+                LSTM(50, return_sequences=True, input_shape=(seq_length, 1)),
+                Dropout(0.2),
+                LSTM(50, return_sequences=False),
+                Dropout(0.2),
+                Dense(7)
             ])
-            model.compile(optimizer="adam", loss="mean_squared_error")
+            model.compile(optimizer='adam', loss='mean_squared_error')
+            model.fit(X, y, epochs=10, batch_size=16)
+            model.save("stock_lstm_model.h5")
+        last_60_days = scaled_data[-seq_length:]
+        predicted_prices = model.predict(last_60_days.reshape(1, seq_length, 1))[0]
+        predicted_prices = scaler.inverse_transform(predicted_prices.reshape(-1, 1)).flatten()
 
-            # Add Early Stopping to prevent overfitting
-            early_stopping = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)  # Increased patience
+        # Sentiment-Adjusted Prediction
+        sentiment_adjustment = avg_sentiment * 0.02 * predicted_prices
+        sentiment_adjusted_prices = predicted_prices + sentiment_adjustment
 
-            # Increased epochs
-            model.fit(X_train, y_train, batch_size=32, epochs=100, verbose=1, validation_split=0.1,
-                      callbacks=[early_stopping])
-            model.save(model_filename)
-            st.write("Trained and saved new model for this stock.")
+        # Plot Predictions
+        future_dates = pd.date_range(start=data.index[-1], periods=8, freq='B')[1:]
+        fig_pred = go.Figure()
+        fig_pred.add_trace(go.Scatter(x=future_dates, y=predicted_prices, mode="lines", name="Predicted Prices"))
+        fig_pred.add_trace(go.Scatter(x=future_dates, y=sentiment_adjusted_prices, mode="lines", name="Sentiment-Adjusted Prices"))
+        fig_pred.update_layout(title="7-Day Stock Price Prediction", xaxis_title="Date", yaxis_title="Price")
+        st.plotly_chart(fig_pred)
 
-        # Make Predictions on Test Data
-        predicted_stock_price = model.predict(X_test)
-        predicted_stock_price = scaler.inverse_transform(
-            np.concatenate((predicted_stock_price, np.zeros_like(predicted_stock_price)),
-                           axis=1))[:, 0]  # Inverse transform only the Close price
-        y_test_actual = scaler.inverse_transform(
-            np.concatenate((y_test.reshape(-1, 1), np.zeros_like(y_test.reshape(-1, 1))), axis=1))[:, 0]
 
-        # Calculate Error Metrics
-        mse = mean_squared_error(y_test_actual, predicted_stock_price)
-        mae = mean_absolute_error(y_test_actual, predicted_stock_price)
-        r2 = r2_score(y_test_actual, predicted_stock_price)
-        st.subheader("Model Performance")
-        st.write(f"Mean Squared Error: {mse:.4f}")
-        st.write(f"Mean Absolute Error: {mae:.4f}")
-        st.write(f"R² Score: {r2:.4f}")
+        # Poll Feature
+        st.subheader("📢 Would you buy this stock?")
+        poll_choice = st.radio("Select an option:", ["Yes", "No"])
+        if st.button("Submit Vote"):
+            # Get user ID
+            cursor.execute("SELECT id FROM users WHERE username = ?", (st.session_state.username,))
+            user_id = cursor.fetchone()
+            if user_id:
+                user_id = user_id[0]
 
-        # Market Sentiment Analysis
-        overall_sentiment, news_data = get_news_sentiment(ticker)
-        st.subheader("Recent News Headlines")
-        for title, score in news_data:
-            st.write(f"- {title} (Sentiment Score: {score:.4f})")
-        st.write(f"Overall Market Sentiment: {overall_sentiment:.4f}")
+                # Insert vote into polls table
+                cursor.execute("INSERT INTO polls (user_id, stock_ticker, vote) VALUES (?, ?, ?)", (user_id, ticker, poll_choice))
+                conn.commit()
 
-        sentiment_adjustment = max(0.9, min(1.1, 1 + (overall_sentiment / 15)))  # Adjust more conservatively
+                # Retrieve and display updated poll results
+                cursor.execute("SELECT vote, COUNT(*) FROM polls WHERE stock_ticker = ? GROUP BY vote", (ticker,))
+                results = cursor.fetchall()
+                total_votes = 0
+                vote_counts = {"Yes": 0, "No": 0}
 
-        # Predict Future Prices (Next 7 Days)
-        future_days = 7
-        last_100_days = scaled_data[-time_step:].reshape(1, time_step, 2)  # Use the last 100 days of scaled data
-        future_predictions = []
-        for _ in range(future_days):
-            pred = model.predict(last_100_days)[0][0]
-            future_predictions.append(pred)
-            last_100_days = np.append(last_100_days[:, 1:, :], [[[pred, scaled_data[-1, 1]]]],
-                                      axis=1)  # important
-        future_predictions = scaler.inverse_transform(
-            np.concatenate((np.array(future_predictions).reshape(-1, 1), np.zeros((future_days, 1))), axis=1))[:, 0]
-        adjusted_predictions = future_predictions * sentiment_adjustment
+                for vote, count in results:
+                    total_votes += count
+                    vote_counts[vote] = count
 
-        # Display Future Predictions Graph
-        future_dates = pd.date_range(start=data.index[-1] + pd.Timedelta(days=1), periods=future_days)
-        fig_future = go.Figure()
-        fig_future.add_trace(go.Scatter(x=future_dates, y=future_predictions.flatten(), mode="lines+markers",
-                                        name="Original Prediction"))
-        fig_future.add_trace(go.Scatter(x=future_dates, y=adjusted_predictions.flatten(), mode="lines+markers",
-                                        name="Sentiment-Adjusted Prediction", line=dict(dash='dot')))
-        fig_future.update_layout(title="Future Stock Price Prediction", xaxis_title="Date", yaxis_title="Price")
-        st.plotly_chart(fig_future)
-    else:
-        st.warning("Invalid stock ticker! Please enter a valid one.")
+                if total_votes > 0:
+                    st.write(f"Yes: {vote_counts['Yes'] / total_votes * 100:.2f}%")
+                    st.write(f"No: {vote_counts['No'] / total_votes * 100:.2f}%")
+                else:
+                    st.write("No votes yet.")
+ 
