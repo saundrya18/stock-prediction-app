@@ -235,7 +235,7 @@ if not st.session_state.authenticated:
         username = verify_reset_token(token)
         if username:
             st.title("🔐 Reset Your Password")
-            new_password = st.text_input("New Password", type="password")
+            new_password = st.text_input("New Password", type="password", key="reset_password")
             if st.button("Reset Password"):
                 reset_password(username, new_password)
                 st.success("✅ Password reset successful! You can now log in.")
@@ -247,19 +247,7 @@ if not st.session_state.authenticated:
         st.session_state.reset_link_sent = False
     st.title("🔐 Stock Prediction App - Login")
     choice = st.radio("Choose an option", ["Login", "Sign Up", "Forgot Password"])
-    token = st.query_params.get("token", "")
-    if token:
-        username = verify_reset_token(token)
-        if username:
-            st.subheader("🔐 Reset Your Password")
-            new_password = st.text_input("New Password", type="password")
-            if st.button("Reset Password"):
-                reset_password(username, new_password)
-                st.success("✅ Password reset successful! Please login.")
-                st.stop()  # Stop here so form doesn't keep showing
-        else:
-            st.error("Invalid or expired reset token.")
-            st.stop()
+    
     if choice == "Login":
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
