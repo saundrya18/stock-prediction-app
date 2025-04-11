@@ -128,26 +128,28 @@ def generate_reset_token():
     return secrets.token_urlsafe(32)
 
 def send_reset_email(email, token):
-    # Create the email content
     reset_link = f"http://your-app.com/reset?token={token}"
     subject = "Password Reset Request"
     body = f"""Click this link to reset your password: {reset_link}
+
 If you didn't request this, please ignore this email."""
 
-    # Construct MIME email message
+    # Use MIME format and utf-8 encoding
     msg = MIMEMultipart()
-    msg['From'] = 'kakkanair007@gmail.com'
-    msg['To'] = email
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain', 'utf-8'))  # Attach plain text with UTF-8 encoding
+    msg["From"] = "kakkanair007@gmail.com"
+    msg["To"] = email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login('kakkanair007@gmail.com', 'kbyb awgd jxya dygx')  # App Password
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login("kakkanair007@gmail.com", "kbyb awgd jxya dygx")  # App password
             server.send_message(msg)
         st.success("Password reset email sent successfully!")
     except Exception as e:
-        st.error(f"Failed to send email: {str(e)}")
+        st.error(f"Failed to send email: {e}")
         st.error("Please contact support if this problem persists.")
+
 
 def verify_reset_token(token):
     cursor.execute("SELECT username, reset_token_timestamp FROM users WHERE reset_token = ?", (token,))
