@@ -240,7 +240,9 @@ if st.session_state.get('rerun'):
 if not st.session_state.authenticated:
     
     
-    token = st.query_params.get("token", [None])[0]
+    token = st.query_params.get("token")
+    if isinstance(token, list):
+        token = token[0] 
     if token:
         username = verify_reset_token(token)
         if username:
@@ -338,14 +340,16 @@ if not st.session_state.authenticated:
             result = cursor.fetchone()
             if result:
                 token = generate_reset_token()
-                send_reset_email(email, token)
                 cursor.execute("UPDATE users SET reset_token = ?, reset_token_timestamp = ? WHERE email = ?", (token, time.time(), email))
                 conn.commit()
+                send_reset_email(email, token)
                 st.session_state.reset_link_sent = True
             else:
                 st.error("Email not found.")
-            if st.session_state.reset_link_sent: #show a message if the reset link was sent.
-                st.write("A password reset link has been sent to your email. Please check your inbox.")
+
+        if st.session_state.reset_link_sent:
+            st.success("A password reset link has been sent to your email. Please check your inbox.")
+
 
         
         
