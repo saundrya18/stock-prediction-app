@@ -207,7 +207,7 @@ if 'authenticated' not in st.session_state:
 
 # ✅ Correct way to check for reset token and force logout
 
-token = st.query_params.get("token", [None])
+token = st.query_params.get("token", [None])[0]
 if token and st.session_state.get("authenticated", False):
     st.session_state.authenticated = False
     st.session_state.username = ""
@@ -240,7 +240,7 @@ if st.session_state.get('rerun'):
 if not st.session_state.authenticated:
     
     
-    token = st.query_params.get("token", [None])
+    token = st.query_params.get("token", [None])[0]
     if token:
         username = verify_reset_token(token)
         if username:
@@ -253,7 +253,8 @@ if not st.session_state.authenticated:
         else:
             st.error("Invalid or expired reset token.")
             st.stop()
-    
+    if 'reset_link_sent' not in st.session_state:
+        st.session_state.reset_link_sent = False
     st.title("🔐 Stock Prediction App - Login")
     choice = st.radio("Choose an option", ["Login", "Sign Up", "Forgot Password"])
     
