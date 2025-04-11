@@ -252,11 +252,13 @@ if not st.session_state.authenticated:
                 reset_password(username, new_password)
                 st.success("✅ Password reset successful! You can now log in.")
                 st.stop()
+            st.stop()
         else:
             st.error("Invalid or expired reset token.")
             st.stop()
     if 'reset_link_sent' not in st.session_state:
         st.session_state.reset_link_sent = False
+
     st.title("🔐 Stock Prediction App - Login")
     choice = st.radio("Choose an option", ["Login", "Sign Up", "Forgot Password"])
     
