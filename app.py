@@ -54,6 +54,10 @@ cursor.execute("""
         reset_token_timestamp REAL
     )
 """)
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN preferred_sectors TEXT")
+except sqlite3.OperationalError:
+    pass
 
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS watchlist (
@@ -128,26 +132,34 @@ def generate_reset_token():
     return secrets.token_urlsafe(32)
 
 def send_reset_email(email, token):
-    reset_link = f"https://stock-prediction-app-tq3fp8vwq795y7coijbaeu.streamlit.app/?token={token}"
-    subject = "Password Reset Request"
-    body = f"""Click this link to reset your password: {reset_link}
+    reset_link = f"https://stock-prediction-app-tq3fp8vwq795y7coijbaeu.streamlit.app?token={token}"
 
-If you didn't request this, please ignore this email."""
-
-    # Use MIME format and utf-8 encoding
     msg = MIMEMultipart()
     msg["From"] = "kakkanair007@gmail.com"
     msg["To"] = email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+    msg["Subject"] = "🔐 Password Reset Request"
+
+    body = f"""
+    Hi there,
+
+    We received a request to reset your password.
+
+    Click the link below to reset it:
+    {reset_link}
+
+    If you didn't request this, just ignore this email.
+
+    — Stock Prediction App Team
+    """
+    msg.attach(MIMEText(body, "plain"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login("kakkanair007@gmail.com", "kbyb awgd jxya dygx")  # App password
-            server.send_message(msg)
-        st.success("Password reset email sent successfully!")
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login("kakkanair007@gmail.com", "kbyb awgd jxya dygx")
+            server.sendmail(msg["From"], msg["To"], msg.as_string())
+        st.success("Password reset email sent successfully! 📬")
     except Exception as e:
-        st.error(f"Failed to send email: {e}")
+        st.error(f"Failed to send email: {str(e)}")
         st.error("Please contact support if this problem persists.")
 
 
@@ -163,7 +175,7 @@ def reset_password(username, new_password):
     cursor.execute("UPDATE users SET password = ?, reset_token = NULL WHERE username = ?", (hashed_password, username))
     conn.commit()
 
-def register_user(name, mobile, email, username, password, otp):
+def register_user(name, mobile, email, username, password, otp,sectors):
     if not is_valid_mobile(mobile):
         return "Invalid mobile number."
 
@@ -174,20 +186,32 @@ def register_user(name, mobile, email, username, password, otp):
         return "Invalid email address."
 
     try:
-        cursor.execute("INSERT INTO users (name, mobile, email, username, password, otp, otp_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (name, mobile, email, username, hash_password(password), str(otp), time.time()))
+        cursor.execute("INSERT INTO users (name, mobile, email, username, password, otp, otp_timestamp,preferred_sectors) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       (name, mobile, email, username, hash_password(password), str(otp), time.time(), sectors))
         conn.commit()
         st.write(f"User registered with username: {username}")
         return True
     except sqlite3.IntegrityError:
         return "Username or Email already exists."
-
+def clean_company_name(name):
+    match = re.match(r"(.+?) \((The)\)", name)
+    if match:
+        return f"The {match.group(1)}"
+    return name
 # Session Management
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.username = ""
     st.session_state.otp_verified = False
     st.session_state.otp_sent = False
+
+# ✅ Correct way to check for reset token and force logout
+
+token = st.query_params.get("token", [None])[0]
+if token and st.session_state.get("authenticated", False):
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.experimental_rerun()
 
 def logout():
     st.session_state.authenticated = False
@@ -215,30 +239,23 @@ if st.session_state.get('rerun'):
     st.rerun() 
 if not st.session_state.authenticated:
     
-    token_from_url = st.query_params.get("token", [""])[0]  # Safely extract token
+    
+    token = st.query_params.get("token", [None])[0]
+    if token:
+        username = verify_reset_token(token)
+        if username:
+            st.title("🔐 Reset Your Password")
+            new_password = st.text_input("New Password", type="password", key="reset_password")
+            if st.button("Reset Password"):
+                reset_password(username, new_password)
+                st.success("✅ Password reset successful! You can now log in.")
+                st.stop()
+        else:
+            st.error("Invalid or expired reset token.")
+            st.stop()
     if 'reset_link_sent' not in st.session_state:
         st.session_state.reset_link_sent = False
-    if token_from_url:
-        st.title("🔒 Reset Your Password")
-        username = verify_reset_token(token_from_url)
-        
-        if username:
-            new_password = st.text_input("New Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            if st.button("Reset Password"):
-                if new_password != confirm_password:
-                    st.error("Passwords do not match.")
-                elif not is_strong_password(new_password):
-                    st.error("Password must be at least 8 characters long and include uppercase, lowercase, and numbers.")
-                else:
-                    reset_password(username, new_password)
-                    st.success("Password reset successful! You can now log in.")
-        else:
-            st.error("Invalid or expired password reset link.")
-        st.stop()  # Stop further rendering
-
     st.title("🔐 Stock Prediction App - Login")
-    
     choice = st.radio("Choose an option", ["Login", "Sign Up", "Forgot Password"])
     
     if choice == "Login":
@@ -259,6 +276,9 @@ if not st.session_state.authenticated:
         email = st.text_input("Email")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
+        sectors = ["Technology", "Healthcare", "Finance", "Energy", "Consumer Goods", "Utilities", "Industrials", "Real Estate"]
+        preferred_sectors = st.multiselect("Preferred Sectors", sectors)
+
 
         if st.button("Register") and not st.session_state.otp_sent:
             if not is_strong_password(password):
@@ -270,7 +290,8 @@ if not st.session_state.authenticated:
                 "mobile": mobile,
                 "email": email,
                 "username": username,
-                "password": password
+                "password": password,
+                "sectors": ",".join(preferred_sectors)
             }
 
             otp = generate_otp()
@@ -295,7 +316,8 @@ if not st.session_state.authenticated:
                         user_data["email"],
                         user_data["username"],
                         user_data["password"],
-                        st.session_state.current_otp
+                        st.session_state.current_otp,
+                        user_data["sectors"]
                     )
                     if result is True:
                         st.session_state.otp_verified = True
@@ -325,15 +347,8 @@ if not st.session_state.authenticated:
             if st.session_state.reset_link_sent: #show a message if the reset link was sent.
                 st.write("A password reset link has been sent to your email. Please check your inbox.")
 
-        token = st.query_params.get("token", "")
-        username = verify_reset_token(token)
-        if username:
-            new_password = st.text_input("New Password", type="password")
-            if st.button("Reset Password"):
-                reset_password(username, new_password)
-                st.success("Password reset successful!")
-        elif token: #only show the error when a token is present in the url.
-            st.error("Invalid or expired reset token.")
+        
+        
 
 
 
@@ -377,8 +392,85 @@ else:
     for msg in st.session_state.messages:
         message(msg["content"], is_user=(msg["role"] == "user"))
 
+    cursor.execute("SELECT id FROM users WHERE username = ?", (st.session_state.username,))
+    user_id = cursor.fetchone()
+    if user_id:
+        user_id = user_id[0]
+
     # Logout Button
     st.sidebar.button("Logout", on_click=logout)
+    # Sidebar separator
+    st.sidebar.markdown("---")
+
+    # Toggle profile visibility
+    if "show_profile" not in st.session_state:
+        st.session_state.show_profile = False
+
+    if st.sidebar.button("👤 Profile"):
+        st.session_state.show_profile = not st.session_state.show_profile
+
+    # Profile section appears only when toggled on
+    if st.session_state.show_profile:
+        st.sidebar.subheader("Your Profile")
+
+        cursor.execute("SELECT id, name, email, mobile, preferred_sectors FROM users WHERE username = ?", (st.session_state.username,))
+        profile_data = cursor.fetchone()
+
+        if profile_data:
+            user_id, name, email, mobile, sectors = profile_data
+            updated_email = st.sidebar.text_input("Email", value=email)
+            updated_mobile = st.sidebar.text_input("Mobile", value=mobile)
+            sector_options = ["Technology", "Healthcare", "Finance", "Energy", "Consumer Goods", "Utilities", "Industrials", "Real Estate"]
+            updated_sectors = st.sidebar.multiselect("Preferred Sectors", sector_options, default=[s.strip() for s in (sectors or "").split(",") if s.strip()])
+
+            if st.sidebar.button("💾 Update Profile"):
+                try:
+                    cursor.execute("""
+                        UPDATE users 
+                        SET email = ?, mobile = ?, preferred_sectors = ?
+                        WHERE id = ?
+                    """, (updated_email, updated_mobile, ",".join(updated_sectors), user_id))
+                    conn.commit()
+                    st.sidebar.success("Profile updated successfully! ✅")
+                except Exception as e:
+                    st.sidebar.error(f"Error updating profile: {e}")
+
+    st.sidebar.subheader("📈 Trending Stocks in Your Sectors")
+    # Get user’s sector preferences
+    cursor.execute("SELECT preferred_sectors FROM users WHERE id = ?", (user_id,))
+    sector_result = cursor.fetchone()
+    if sector_result and sector_result[0]:
+        user_sectors = [s.strip() for s in sector_result[0].split(",") if s.strip()]
+
+        sector_to_stocks = {
+            "Technology": ["AAPL", "MSFT", "NVDA"],
+            "Healthcare": ["JNJ", "PFE", "MRK"],
+            "Finance": ["JPM", "BAC", "WFC"],
+            "Energy": ["XOM", "CVX", "SLB"],
+            "Consumer Goods": ["PG", "KO", "PEP"],
+            "Utilities": ["NEE", "DUK", "SO"],
+            "Industrials": ["UNP", "GE", "CAT"],
+            "Real Estate": ["PLD", "AMT", "CCI"]
+        }
+
+        for sector in user_sectors:
+            st.sidebar.markdown(f"{sector}")
+            stocks = sector_to_stocks.get(sector, [])
+            for stock in stocks:
+                stock_info = yf.Ticker(stock).info
+                stock_name = stock_info.get("shortName", stock)
+                stock_name = clean_company_name(stock_info.get("shortName", stock))
+                stock_data = yf.Ticker(stock).history(period="1mo")
+
+                if not stock_data.empty:
+                    st.sidebar.write(f"📊 {stock_name} ({stock})")
+                    st.sidebar.line_chart(stock_data["Close"])
+                else:
+                    st.sidebar.write(f"{stock_name} ({stock}): No recent data available.")
+    else:
+        st.sidebar.info("You haven’t selected any sector preferences yet.")
+    
+
     st.sidebar.subheader("📌 Your Watchlist")
 
     # Get user ID
