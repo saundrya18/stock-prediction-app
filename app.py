@@ -206,7 +206,7 @@ if 'authenticated' not in st.session_state:
     st.session_state.otp_sent = False
 
 # ✅ Correct way to check for reset token and force logout
-query_params = st.query_params()
+query_params = st.experimental_get_query_params()
 token = query_params.get("token", [None])[0]
 if token and st.session_state.get("authenticated", False):
     st.session_state.authenticated = False
@@ -238,7 +238,7 @@ if st.session_state.get('rerun'):
     st.session_state.rerun = False
     st.rerun() 
 if not st.session_state.authenticated:
-    query_params = st.query_params()
+    query_params = st.experimental_get_query_params()
     token = query_params.get("token", [None])[0]
     if token:
         username = verify_reset_token(token)
@@ -346,7 +346,7 @@ if not st.session_state.authenticated:
             if st.session_state.reset_link_sent: #show a message if the reset link was sent.
                 st.write("A password reset link has been sent to your email. Please check your inbox.")
 
-        query_params = st.query_params()
+        query_params = st.experimental_get_query_params()
         token = query_params.get("token", [None])[0]
         username = verify_reset_token(token)
         if username:
