@@ -128,26 +128,22 @@ def generate_reset_token():
     return secrets.token_urlsafe(32)
 
 def send_reset_email(email, token):
-    # Email content
+    # Create the email content
     reset_link = f"http://your-app.com/reset?token={token}"
-    message = f"""\
-    Subject: Password Reset Request
-    
-    Click this link to reset your password: {reset_link}
-    
-    If you didn't request this, please ignore this email.
-    """
+    subject = "Password Reset Request"
+    body = f"""Click this link to reset your password: {reset_link}
+If you didn't request this, please ignore this email."""
 
+    # Construct MIME email message
+    msg = MIMEMultipart()
+    msg['From'] = 'kakkanair007@gmail.com'
+    msg['To'] = email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))  # Attach plain text with UTF-8 encoding
     try:
-        # Create secure connection
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            # Use your full email address and App Password
-            server.login('kakkanair007@gmail.com', 'kbyb awgd jxya dygx')  # Use App Password here!
-            server.sendmail(
-                'kakkanair007@gmail.com',  # From
-                email,                   # To
-                message
-            )
+            server.login('kakkanair007@gmail.com', 'kbyb awgd jxya dygx')  # App Password
+            server.send_message(msg)
         st.success("Password reset email sent successfully!")
     except Exception as e:
         st.error(f"Failed to send email: {str(e)}")
