@@ -205,6 +205,11 @@ if 'authenticated' not in st.session_state:
     st.session_state.otp_verified = False
     st.session_state.otp_sent = False
 
+# Force logout if a reset token is in the URL
+if "token" in st.query_params:
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+
 def logout():
     st.session_state.authenticated = False
     st.session_state.username = ""
