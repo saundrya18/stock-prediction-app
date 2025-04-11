@@ -347,8 +347,7 @@ if not st.session_state.authenticated:
             else:
                 st.error("Email not found.")
 
-        if st.session_state.reset_link_sent:
-            st.success("A password reset link has been sent to your email. Please check your inbox.")
+        
 
 
         
