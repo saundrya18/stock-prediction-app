@@ -128,7 +128,7 @@ def generate_reset_token():
     return secrets.token_urlsafe(32)
 
 def send_reset_email(email, token):
-    reset_link = f"http://your-app.com/reset?token={token}"
+    reset_link = f"https://stock-prediction-app-tq3fp8vwq795y7coijbaeu.streamlit.app/?token={token}"
     subject = "Password Reset Request"
     body = f"""Click this link to reset your password: {reset_link}
 
