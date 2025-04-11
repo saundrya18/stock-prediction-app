@@ -26,6 +26,12 @@ from twilio.rest import Client
 from streamlit_chat import message
 import google.generativeai as genai
 
+token = st.query_params.get("token", [None])[0]
+if token and st.session_state.get("authenticated", False):
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.experimental_rerun()
+
 genai.configure(api_key=st.secrets["gemini_api_key"])
 
 # Clear chatbot response when the app refreshes
