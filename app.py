@@ -214,8 +214,8 @@ if st.session_state.get('rerun'):
     st.session_state.rerun = False
     st.rerun() 
 if not st.session_state.authenticated:
-    query_params = st.experimental_get_query_params()
-    token_from_url = query_params.get("token", [""])[0]  # Safely extract token
+    
+    token_from_url = st.query_params.get("token", [""])[0]  # Safely extract token
     if 'reset_link_sent' not in st.session_state:
         st.session_state.reset_link_sent = False
     if token_from_url:
