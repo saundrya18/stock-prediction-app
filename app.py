@@ -214,9 +214,32 @@ if st.session_state.get('rerun'):
     st.session_state.rerun = False
     st.rerun() 
 if not st.session_state.authenticated:
+    query_params = st.experimental_get_query_params()
+    token_from_url = query_params.get("token", [""])[0]  # Safely extract token
     if 'reset_link_sent' not in st.session_state:
         st.session_state.reset_link_sent = False
+    if token_from_url:
+        
+    st.title("🔒 Reset Your Password")
+    username = verify_reset_token(token_from_url)
+    
+    if username:
+        new_password = st.text_input("New Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+        if st.button("Reset Password"):
+            if new_password != confirm_password:
+                st.error("Passwords do not match.")
+            elif not is_strong_password(new_password):
+                st.error("Password must be at least 8 characters long and include uppercase, lowercase, and numbers.")
+            else:
+                reset_password(username, new_password)
+                st.success("Password reset successful! You can now log in.")
+    else:
+        st.error("Invalid or expired password reset link.")
+    st.stop()  # Stop further rendering
+
     st.title("🔐 Stock Prediction App - Login")
+    
     choice = st.radio("Choose an option", ["Login", "Sign Up", "Forgot Password"])
     
     if choice == "Login":
