@@ -219,24 +219,23 @@ if not st.session_state.authenticated:
     if 'reset_link_sent' not in st.session_state:
         st.session_state.reset_link_sent = False
     if token_from_url:
+        st.title("🔒 Reset Your Password")
+        username = verify_reset_token(token_from_url)
         
-    st.title("🔒 Reset Your Password")
-    username = verify_reset_token(token_from_url)
-    
-    if username:
-        new_password = st.text_input("New Password", type="password")
-        confirm_password = st.text_input("Confirm Password", type="password")
-        if st.button("Reset Password"):
-            if new_password != confirm_password:
-                st.error("Passwords do not match.")
-            elif not is_strong_password(new_password):
-                st.error("Password must be at least 8 characters long and include uppercase, lowercase, and numbers.")
-            else:
-                reset_password(username, new_password)
-                st.success("Password reset successful! You can now log in.")
-    else:
-        st.error("Invalid or expired password reset link.")
-    st.stop()  # Stop further rendering
+        if username:
+            new_password = st.text_input("New Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+            if st.button("Reset Password"):
+                if new_password != confirm_password:
+                    st.error("Passwords do not match.")
+                elif not is_strong_password(new_password):
+                    st.error("Password must be at least 8 characters long and include uppercase, lowercase, and numbers.")
+                else:
+                    reset_password(username, new_password)
+                    st.success("Password reset successful! You can now log in.")
+        else:
+            st.error("Invalid or expired password reset link.")
+        st.stop()  # Stop further rendering
 
     st.title("🔐 Stock Prediction App - Login")
     
