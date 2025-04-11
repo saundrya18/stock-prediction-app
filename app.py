@@ -238,15 +238,7 @@ if st.session_state.get('rerun'):
     st.session_state.rerun = False
     st.rerun() 
 if not st.session_state.authenticated:
-    token = st.query_params.get("token", [None])[0]
-    username = verify_reset_token(token)
-    if username:
-        new_password = st.text_input("New Password", type="password")
-        if st.button("Reset Password"):
-            reset_password(username, new_password)
-            st.success("Password reset successful!")
-    elif token: #only show the error when a token is present in the url.
-        st.error("Invalid or expired reset token.")
+    
     
     token = st.query_params.get("token", [None])[0]
     if token:
