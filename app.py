@@ -141,7 +141,7 @@ def send_reset_email(email, token):
     reset_link = f"https://stock-prediction-app-tq3fp8vwq795y7coijbaeu.streamlit.app?token={token}"
 
     msg = MIMEMultipart()
-    msg["From"] = "kakkanair007@gmail.com"
+    msg["From"] = "stockprediction6@gmail.com"
     msg["To"] = email
     msg["Subject"] = "🔐 Password Reset Request"
 
@@ -161,7 +161,7 @@ def send_reset_email(email, token):
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login("kakkanair007@gmail.com", "kbyb awgd jxya dygx")
+            server.login("stockprediction6@gmail.com", "klro igdi jpad ltvl")
             server.sendmail(msg["From"], msg["To"], msg.as_string())
         st.success("Password reset email sent successfully! 📬")
     except Exception as e:
@@ -211,7 +211,7 @@ if 'authenticated' not in st.session_state:
     st.session_state.otp_verified = False
     st.session_state.otp_sent = False
 
-# ✅ Correct way to check for reset token and force logout
+
 
 token = st.query_params.get("token", [None])[0]
 if token and st.session_state.get("authenticated", False):
